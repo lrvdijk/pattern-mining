@@ -4,7 +4,7 @@ from dbdm import fp_growth, measures, itemsets
 
 
 def generate_association_rules(df, min_support=10, min_conf=70):
-    min_support_count = int((len(df) * min_support) / 100)
+    min_support_count = int(((len(df) * min_support) / 100) + 0.5)
 
     iter = fp_growth.find_frequent_itemsets(itemsets.generator(df),
                                             min_support_count,
