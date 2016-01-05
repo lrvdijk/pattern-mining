@@ -11,7 +11,8 @@ Basic usage of the module is very simple:
 This file has been modified to work with Python 3.
 """
 
-from collections import defaultdict, namedtuple
+from collections import namedtuple, Counter
+import itertools
 
 __author__ = 'Eric Naeseth <eric@naeseth.com>'
 __copyright__ = 'Copyright © 2009 Eric Naeseth'
@@ -34,21 +35,19 @@ def find_frequent_itemsets(transactions, minimum_support,
     If `include_support` is true, yield (itemset, support) pairs instead of
     just the itemsets.
     """
-    items = defaultdict(lambda: 0)  # mapping from items to their supports
-    processed_transactions = []
+    items = Counter()  # mapping from items to their supports
 
     # Load the passed-in transactions and count the support that individual
     # items have.
-    for transaction in transactions:
-        processed = []
-        for item in transaction:
-            items[item] += 1
-            processed.append(item)
-        processed_transactions.append(processed)
+    # Save one iterator for when we're going to process the transactions for
+    # to build the tree.
+    iter1, iter2 = itertools.tee(transactions, 2)
+    for transaction in iter1:
+        items.update(transaction)
 
     # Remove infrequent items from the item support dictionary.
-    items = dict((item, support) for item, support in items.items()
-                 if support >= minimum_support)
+    items = {item: support for item, support in items.items()
+             if support >= minimum_support}
 
     # Build our FP-tree. Before any transactions can be added to the tree, they
     # must be stripped of infrequent items and their surviving items must be
@@ -59,7 +58,7 @@ def find_frequent_itemsets(transactions, minimum_support,
         return transaction
 
     master = FPTree()
-    for transaction in map(clean_transaction, processed_transactions):
+    for transaction in map(clean_transaction, iter2):
         master.add(transaction)
 
     def find_with_suffix(tree, suffix):
@@ -73,8 +72,7 @@ def find_frequent_itemsets(transactions, minimum_support,
                 # Build a conditional tree and recursively search for frequent
                 # itemsets within it.
                 cond_tree = conditional_tree_from_paths(
-                    tree.prefix_paths(item),
-                    minimum_support)
+                    tree.prefix_paths(item))
                 for s in find_with_suffix(cond_tree, found_set):
                     yield s  # pass along the good news to our caller
 
@@ -191,26 +189,8 @@ class FPTree(object):
             for node in nodes:
                 print('    %r' % node)
 
-    def _removed(self, node):
-        """Called when `node` is removed from the tree; performs cleanup."""
 
-        head, tail = self._routes[node.item]
-        if node is head:
-            if node is tail or not node.neighbor:
-                # It was the sole node.
-                del self._routes[node.item]
-            else:
-                self._routes[node.item] = self.Route(node.neighbor, tail)
-        else:
-            for n in self.nodes(node.item):
-                if n.neighbor is node:
-                    n.neighbor = node.neighbor  # skip over
-                    if node is tail:
-                        self._routes[node.item] = self.Route(head, n)
-                    break
-
-
-def conditional_tree_from_paths(paths, minimum_support):
+def conditional_tree_from_paths(paths):
     """Builds a conditional FP-tree from the given prefix paths."""
     tree = FPTree()
     condition_item = None
@@ -242,21 +222,6 @@ def conditional_tree_from_paths(paths, minimum_support):
         count = path[-1].count
         for node in reversed(path[:-1]):
             node._count += count
-
-    # Eliminate the nodes for any items that are no longer frequent.
-    for item in items:
-        support = sum(n.count for n in tree.nodes(item))
-        if support < minimum_support:
-            # Doesn't make the cut anymore
-            for node in tree.nodes(item):
-                if node.parent is not None:
-                    node.parent.remove(node)
-
-    # Finally, remove the nodes corresponding to the item for which this
-    # conditional tree was generated.
-    for node in tree.nodes(condition_item):
-        if node.parent is not None:  # the node might already be an orphan
-            node.parent.remove(node)
 
     return tree
 
@@ -293,30 +258,6 @@ class FPNode(object):
         except KeyError:
             return None
 
-    def remove(self, child):
-        try:
-            if self._children[child.item] is child:
-                del self._children[child.item]
-                child.parent = None
-                self._tree._removed(child)
-                for sub_child in child.children:
-                    try:
-                        # Merger case: we already have a child for that
-                        # item, so
-                        # add the sub-child's count to our child's count.
-                        self._children[
-                            sub_child.item]._count += sub_child.count
-                        sub_child.parent = None  # it's an orphan now
-                    except KeyError:
-                        # Turns out we don't actually have a child, so just add
-                        # the sub-child as our own child.
-                        self.add(sub_child)
-                child._children = {}
-            else:
-                raise ValueError("that node is not a child of this node")
-        except KeyError:
-            raise ValueError("that node is not a child of this node")
-
     def __contains__(self, item):
         return item in self._children
 
@@ -351,42 +292,34 @@ class FPNode(object):
         """True if this node is a leaf in the tree; false if otherwise."""
         return len(self._children) == 0
 
-    def parent():
-        doc = "The node's parent."
+    @property
+    def parent(self):
+        """The node's parent"""
+        return self._parent
 
-        def fget(self):
-            return self._parent
+    @parent.setter
+    def parent(self, value):
+        if value is not None and not isinstance(value, FPNode):
+            raise TypeError("A node must have an FPNode as a parent.")
+        if value and value.tree is not self.tree:
+            raise ValueError("Cannot have a parent from another tree.")
+        self._parent = value
 
-        def fset(self, value):
-            if value is not None and not isinstance(value, FPNode):
-                raise TypeError("A node must have an FPNode as a parent.")
-            if value and value.tree is not self.tree:
-                raise ValueError("Cannot have a parent from another tree.")
-            self._parent = value
-
-        return locals()
-
-    parent = property(**parent())
-
-    def neighbor():
-        doc = """
+    @property
+    def neighbor(self):
+        """
         The node's neighbor; the one with the same value that is "to the right"
         of it in the tree.
         """
+        return self._neighbor
 
-        def fget(self):
-            return self._neighbor
-
-        def fset(self, value):
-            if value is not None and not isinstance(value, FPNode):
-                raise TypeError("A node must have an FPNode as a neighbor.")
-            if value and value.tree is not self.tree:
-                raise ValueError("Cannot have a neighbor from another tree.")
-            self._neighbor = value
-
-        return locals()
-
-    neighbor = property(**neighbor())
+    @neighbor.setter
+    def neighbor(self, value):
+        if value is not None and not isinstance(value, FPNode):
+            raise TypeError("A node must have an FPNode as a neighbor.")
+        if value and value.tree is not self.tree:
+            raise ValueError("Cannot have a neighbor from another tree.")
+        self._neighbor = value
 
     @property
     def children(self):
