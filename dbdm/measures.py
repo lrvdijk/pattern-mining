@@ -53,10 +53,11 @@ def lift(df, a, b, supports=None):
 
 def kulczynski(df, a, b, supports):
     supports1 = calculate_supports(df, a, b, supports)
-
-    supports.pop('a')
-    supports.pop('b')
-    supports2 = calculate_supports(df, b, a, supports)
+    supports2 = {
+        'a': supports1['b'],
+        'b': supports1['a'],
+        'ab': supports1['ab']
+    }
 
     return 0.5 * (
         confidence(df, a, supports=supports1) +
