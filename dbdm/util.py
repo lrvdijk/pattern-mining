@@ -1,9 +1,4 @@
 import pandas as pd
-import numpy as np
-
-NUMERIC_DATATYPES = [
-    'int16', 'int32', 'int64', 'float16', 'float32', 'float64'
-]
 
 
 def generate_criteria(df, values):
@@ -21,9 +16,6 @@ def generate_criteria(df, values):
             criteria = df[item[1]] == item[0]
         else:
             criteria &= df[item[1]] == item[0]
-
-        if df.dtypes[item[1]] in NUMERIC_DATATYPES:
-            criteria |= df[item[1]].apply(np.isnan)
 
     return criteria
 
